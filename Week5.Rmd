@@ -1,0 +1,125 @@
+---
+title: "NYPD Shooting Incident Data"
+author: "Michiel Schinkel"
+date: "24-11-2021"
+output: pdf_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load-packages, include=FALSE}
+library(tidyverse)
+library(magrittr)
+library(knitr)
+library(lubridate)
+library(ggplot2)
+```
+
+## Loading in the data
+
+Using the code below, we will read in the NYPD Shooting Incident Data from the city of New York for further analysis.
+We will use a direct link to the dataset to aid reproducibility.
+
+```{r data, echo = TRUE}
+data <- read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+## Tidying the data
+
+With the code below, we will tidy the data. Using `length(unique(as.factor(data$INCIDENT_KEY)))`, we noticed that there were just 18562 unique incidents, while there are 23568 records. We therefore started cleaning the data by removing duplicates. In the next step, we removed all columns that would not be used in the final analysis, and added **UNKNOWN** or **U** to missing values. Finally, we set the correct column types. 
+
+```{r tidy, echo = TRUE}
+tidy_data <- data %>%
+  distinct(INCIDENT_KEY, .keep_all = TRUE) %>%
+  select(-c("JURISDICTION_CODE",  "X_COORD_CD", "Y_COORD_CD", "Latitude", "Longitude", "Lon_Lat")) %>%
+  mutate(LOCATION_DESC = fct_recode(LOCATION_DESC, "UNKNOWN" = ""),
+         PERP_SEX = fct_recode(PERP_SEX, "U" = ""),
+         PERP_RACE = fct_recode(PERP_RACE, "UNKNOWN" = ""),
+         PERP_AGE_GROUP = replace(PERP_AGE_GROUP, PERP_AGE_GROUP %in% c("", "1020", "224", "940"), "UNKNOWN"),
+         OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         PRECINCT = as.factor(PRECINCT))
+print(summary(tidy_data))
+```
+
+## Visualizing and analyzing the data
+
+With this project, we aim to study the factors that may influence the fatality rates of shooting incidents (STATISTICAL_MURDER_FLAG == TRUE). To understand the data, we first visualize several aspects. 
+
+We start of the exploratory analysis by looking at the shooting incidents over time since the beginning of the data collection.
+
+```{r, echo=TRUE}
+ggplot(data = tidy_data, aes(x = year(OCCUR_DATE))) +
+geom_bar(stat = "count") +
+xlab("Year") +
+ylab("Number of shooting incidents") +
+ggtitle("Number of fatal and non-fatal shooting incidents per year") +
+theme_classic()
+```
+From this visualization, we learn that the number of shooting incidents had been decreasing until 2019. The COVID-19 pandemic has suddenly brought us back to where we were in 2005. Also notable, the numbers of shooting incidents per year range from about 700 to 1500, indicating that there are between 2-4 shooting incidents in New York each day.
+
+In the next visualization, we look at the percentage of fatal incidents per year.
+
+
+```{r, echo=TRUE}
+ggplot(data = tidy_data, aes(x = year(OCCUR_DATE), fill=STATISTICAL_MURDER_FLAG)) +
+geom_bar(stat = "count", position="fill") +
+xlab("Year") +
+ylab("Percentage of fatal and non-fatal shooting incidents") +
+ggtitle("Number of fatal and non-fatal shooting incidents per year") +
+theme_classic()
+```
+
+From this visualization, we learn that the percentage of fatal incidents has remained rather similar, even with the overall decreases in shooting incidents over time.
+
+## Daily patterns in shooting incidents
+
+Next, we zoom on on daily patterns of the shooting incidens. We then also plot the percentage of fatal and non-fatal shooting incidents during all hours of the day.
+
+```{r, echo=TRUE}
+ggplot(data = tidy_data, aes(x = hour(OCCUR_TIME))) +
+geom_bar(stat = "count") +
+xlab("Hour of the day") +
+ylab("Number of shooting incidents") +
+ggtitle("Number of fatal and non-fatal shooting incidents during the day") +
+theme_classic()
+```
+
+```{r, echo=TRUE}
+ggplot(data = tidy_data, aes(x = hour(OCCUR_TIME), fill=STATISTICAL_MURDER_FLAG)) +
+geom_bar(stat = "count", position="fill") +
+xlab("Hour of the day") +
+ylab("Percentage of fatal and non-fatal shooting incidents") +
+ggtitle("Number of fatal and non-fatal shooting incidents during the day") +
+theme_classic()
+```
+From the visualizations, it seems that there is a clear distribution of the shooting incidents during every 24-hour period. Most shooting incidents happen at night, while few happen between 6am and 11am. In the second visualization, we can see that the percentage of fatal shooting incidents does not seem to be influenced by the timing of the incident.
+
+We further set out to study factors other than timing during the day for their influence on the fatality rates of shooting incidents. We created a logistic regression model to predict the status of the STATISTICAL_MURDER_FLAG based on the sex and age of the perpetrator, as well as the boro in which they happened:
+
+```{r, echo=TRUE}
+mod <- glm(STATISTICAL_MURDER_FLAG ~ PERP_SEX + PERP_AGE_GROUP + BORO, data = tidy_data, family="binomial")
+exp(coef(mod))
+exp(confint(mod))
+summary(mod)  
+```
+From this data we can learn various things. First of all, we see that sex and age of the perpetrator have a significant association with the chance of a fatal incident. To start with sex, we can see that both male and female perpetrators have lower risks of a fatal accident as opposed to the "UNKNOWN" reference groups. We will further discuss the possible reasons for this is the next paragraph on bias identification. We also see that various age groups of perpetrators are  significantly associated with higher fatality rates. Compared with the reference group of perpetrators under the age of 18, all age groups above 24 are significantly associated with higher mortality rates. Finally, we see that the location of the shooting has a far smaller influence on the fatality rate, although shooting incidents in Brooklyn are significantly associated with a slightly higher odds ratio for fatality.
+
+## Bias identification
+
+From the logistic regression analysis, we learned that being either a female or male perpetrator were both associated with lower fatality rates compared with the "UNKNOWN" group. The bias here may be that it is more difficult to identify the perpetrator of a fatal shooting incident, since the victim cannot identify the person in question. Therefore, the percentage of UNKNOWN sex labels in the fatal shooting incident may be much higher. Interestingly, in case of the perpetrators age, the UNKNOWN label is associated with a lower mortality rate. This contradicts the first hypothesis, which should thus be carefully evaluated in future analyses.
+
+## Conclusion
+
+In conclusion, we looked at factors that are associated with fatal shooting incidents in New York. We learned that most shootings happen in the evening and night, while few happen in the morning. However, the fatality rates of the shooting do not seem to be influenced by the time of the day. We did find that perpetrators in older age categories have a significantly higher odds ratio for a fatal shooting incident. The same is true for shooting incidents that happen in Brooklyn. Lastly, we found that shooting incidents by perpetrators of whom the sex is known, are associated with a much lower fatality rate than when the sex is unknown. This final observation may be caused by a selection bias and needs to be studied further in future analyses.
+
+
+## Session info
+
+To ensure this work is reproducible, we here add the session info.
+
+```{r session info, echo = FALSE}
+print(sessionInfo())
+```
